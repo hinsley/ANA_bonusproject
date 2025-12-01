@@ -13,7 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 viz3d = [
     "pyvista>=0.43.0",
-    "imageio>=2.33.0",
+    "pillow>=10.0.0",
 ]
 dev = [
     "pytest>=7.0.0",

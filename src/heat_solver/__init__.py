@@ -6,7 +6,7 @@ This package provides numerical solvers for the forced heat equation:
 
 Supported schemes:
     - 2D: D'Yakonov ADI scheme
-    - 3D: Peaceman-Rachford ADI scheme (adapted for 3D)
+    - 3D: Douglas-Gunn ADI scheme (Delta Form)
 
 Boundary condition types:
     - Dirichlet: u = g(x, t)
@@ -31,6 +31,7 @@ from .visualization import (
     animate_solution_2d,
     animate_solution_3d,
     save_solution_series,
+    create_volume_animation,
 )
 from .analysis import compute_errors, convergence_study
 
@@ -49,6 +50,7 @@ __all__ = [
     "animate_solution_2d",
     "animate_solution_3d",
     "save_solution_series",
+    "create_volume_animation",
     "compute_errors",
     "convergence_study",
 ]

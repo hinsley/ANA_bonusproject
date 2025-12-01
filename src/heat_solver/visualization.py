@@ -195,7 +195,11 @@ def animate_solution_2d(
     
     if save_path is not None:
         fps = max(1, int(1000 / interval))
-        anim.save(save_path, writer='pillow', fps=fps)
+        # Use PillowWriter with optimized settings for better color quality.
+        from matplotlib.animation import PillowWriter
+        writer = PillowWriter(fps=fps)
+        anim.save(save_path, writer=writer, dpi=150)
+        plt.close(fig)  # Close figure after saving to prevent display.
     
     return anim
 
@@ -632,6 +636,202 @@ def save_volume_snapshots(
         print(f"  Saved: {filepath}")
 
     return saved_paths
+
+
+def create_volume_animation(
+    X: NDArray[np.float64],
+    Y: NDArray[np.float64],
+    Z: NDArray[np.float64],
+    times: List[float],
+    solutions: List[NDArray[np.float64]],
+    output_path: str = "volume_animation.gif",
+    cmap: str = "viridis",
+    opacity: Union[float, str] = 0.6,
+    clim: Optional[Tuple[float, float]] = None,
+    title_prefix: str = "3D Heat Equation",
+    fps: int = 10,
+    window_size: Tuple[int, int] = (1024, 768),
+    camera_position: Optional[Union[str, List]] = "iso",
+) -> str:
+    """
+    Create a 3D volumetric animation (gif) using PyVista.
+
+    Renders the full 3D volume at each time step and combines them into a gif.
+    No interactive preview is shown during rendering.
+
+    Parameters
+    ----------
+    X, Y, Z : ndarray
+        Meshgrid coordinates.
+    times : list of float
+        Time stamps matching `solutions`.
+    solutions : list of ndarray
+        3D solution fields (nx, ny, nz) for each time.
+    output_path : str
+        Output file path. Defaults to "volume_animation.gif".
+    cmap : str
+        Colormap for the volume rendering.
+    opacity : float or str
+        Opacity for volume rendering. Can be a scalar (0-1), or a string
+        like "linear", "sigmoid", "geom" for opacity transfer functions.
+        Default is 0.6 for good visibility.
+    clim : tuple, optional
+        Fixed color limits (vmin, vmax). If None, uses global min/max.
+    title_prefix : str
+        Text prefix drawn on each frame.
+    fps : int
+        Frames per second for the gif.
+    window_size : tuple
+        Size of the rendering window (width, height).
+    camera_position : str or list, optional
+        Camera position. Use "iso", "xy", "xz", "yz" for preset views, or
+        a list of [(camera_x, camera_y, camera_z), (focal_x, focal_y, focal_z),
+        (up_x, up_y, up_z)] for custom positioning.
+
+    Returns
+    -------
+    output_path : str
+        Path to the saved gif file.
+
+    Notes
+    -----
+    Requires pyvista and pillow to be installed.
+    """
+    try:
+        import pyvista as pv
+    except ImportError:
+        raise ImportError(
+            "PyVista is required for volumetric animations. "
+            "Install with: pip install pyvista"
+        )
+
+    try:
+        from PIL import Image
+    except ImportError:
+        raise ImportError(
+            "Pillow is required for gif output. Install with: pip install pillow"
+        )
+
+    import os
+    import tempfile
+    import shutil
+
+    if len(times) != len(solutions):
+        raise ValueError("times and solutions must have the same length.")
+
+    # Ensure output has .gif extension.
+    if not output_path.lower().endswith(".gif"):
+        output_path = os.path.splitext(output_path)[0] + ".gif"
+
+    # Create structured grid.
+    grid = pv.StructuredGrid(X, Y, Z)
+
+    # Determine global color limits.
+    if clim is None:
+        clim = (
+            float(min(np.min(sol) for sol in solutions)),
+            float(max(np.max(sol) for sol in solutions)),
+        )
+
+    # Disable interactive rendering.
+    pv.OFF_SCREEN = True
+
+    # Create a temporary directory for frames.
+    temp_dir = tempfile.mkdtemp(prefix="pyvista_anim_")
+    frame_paths = []
+
+    # Determine camera position once for consistency across frames.
+    # We'll capture it from the first frame's plotter.
+    saved_camera_position = None
+
+    try:
+        # Render each frame with a fresh plotter (required for volume rendering).
+        for idx, (t, sol) in enumerate(zip(times, solutions)):
+            # Create fresh plotter for each frame.
+            plotter = pv.Plotter(off_screen=True, window_size=window_size)
+            plotter.background_color = "white"
+
+            # Update grid with current solution.
+            grid["u"] = sol.ravel(order="F")
+
+            # Add volume rendering with current data.
+            plotter.add_volume(
+                grid,
+                scalars="u",
+                cmap=cmap,
+                opacity=opacity,
+                shade=True,
+                clim=clim,
+            )
+
+            # Add outline and axes.
+            plotter.add_mesh(grid.outline(), color="black", line_width=2)
+            plotter.add_axes()
+
+            # Set camera position.
+            if saved_camera_position is not None:
+                # Use saved camera position for consistency.
+                plotter.camera_position = saved_camera_position
+            elif camera_position == "iso":
+                plotter.camera_position = "iso"
+                plotter.camera.azimuth = 45
+                plotter.camera.elevation = 30
+                plotter.reset_camera()
+                saved_camera_position = plotter.camera_position
+            elif camera_position in ("xy", "xz", "yz"):
+                plotter.camera_position = camera_position
+                plotter.reset_camera()
+                saved_camera_position = plotter.camera_position
+            elif camera_position is not None:
+                plotter.camera_position = camera_position
+                saved_camera_position = plotter.camera_position
+            else:
+                plotter.reset_camera()
+                saved_camera_position = plotter.camera_position
+
+            # Add title with current time.
+            plotter.add_text(
+                f"{title_prefix}: t = {t:.4f}",
+                font_size=14,
+                color="black",
+                position="upper_left",
+            )
+
+            # Save frame.
+            frame_path = os.path.join(temp_dir, f"frame_{idx:04d}.png")
+            plotter.screenshot(frame_path)
+            plotter.close()
+            frame_paths.append(frame_path)
+            print(f"  Rendered frame {idx + 1}/{len(times)} (t = {t:.4f})")
+
+        # Combine frames into gif using PIL with high-quality palette.
+        duration = int(1000 / fps)  # Milliseconds per frame.
+        
+        # Load and convert images to use adaptive 256-color palettes with dithering.
+        # This produces much better color quality than the default.
+        images = []
+        for fp in frame_paths:
+            img = Image.open(fp).convert("RGB")  # Convert to RGB (no alpha).
+            # Quantize with maximum colors and Floyd-Steinberg dithering.
+            img_p = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=1)
+            images.append(img_p)
+        
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0,
+            optimize=False,  # Don't reduce colors further.
+        )
+
+    finally:
+        # Clean up temporary directory.
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+    print(f"\nAnimation saved to: {output_path}")
+    return output_path
 
 
 def save_solution(
