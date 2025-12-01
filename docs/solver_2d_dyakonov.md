@@ -42,7 +42,7 @@ $$
 This equation couples nodes in the x-direction only. For each fixed $j$, we solve a tridiagonal system:
 
 $$
--\frac{r_x}{2} u^{*}_{i-1,j} + (1 + r_x) u^{*}_{i,j} - \frac{r_x}{2} u^{*}_{i+1,j} = \text{RHS}_{i,j}
+-\frac{r_x}{2} u^{\*}_{i-1,j} + (1 + r_x) u^{\*}_{i,j} - \frac{r_x}{2} u^{\*}_{i+1,j} = \text{RHS}_{i,j}
 $$
 
 Where the RHS is computed by applying explicit operators to $u^n$.

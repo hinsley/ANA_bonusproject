@@ -65,7 +65,7 @@ $$
 For each fixed $(j, k)$ pair, solve the tridiagonal system:
 
 $$
--\frac{r_x}{2} \Delta u^{*}_{i-1} + (1 + r_x) \Delta u^{*}_{i} - \frac{r_x}{2} \Delta u^{*}_{i+1} = S_{i,j,k}
+-\frac{r_x}{2} \Delta u^{\*}_{i-1} + (1 + r_x) \Delta u^{\*}_{i} - \frac{r_x}{2} \Delta u^{\*}_{i+1} = S_{i,j,k}
 $$
 
 #### Step 2: Y-Sweep (Solve for $\Delta u^{**}$)
