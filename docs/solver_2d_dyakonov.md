@@ -42,7 +42,7 @@ $$
 This equation couples nodes in the x-direction only. For each fixed $j$, we solve a tridiagonal system:
 
 $$
--\frac{r_x}{2} u^*_{i-1,j} + (1 + r_x) u^*_{i,j} - \frac{r_x}{2} u^*_{i+1,j} = \text{RHS}_{i,j}
+-\frac{r_x}{2} u^{*}_{i-1,j} + (1 + r_x) u^{*}_{i,j} - \frac{r_x}{2} u^{*}_{i+1,j} = \text{RHS}_{i,j}
 $$
 
 Where the RHS is computed by applying explicit operators to $u^n$.
@@ -168,6 +168,14 @@ solver = HeatSolver2D(
 times, solutions = solver.solve(t_final=0.5, dt=0.001, save_every=50)
 ```
 
+## Note: Full Form vs Delta Form
+
+Unlike the 3D Douglas-Gunn solver which uses **delta form** (solving for increments $\Delta u$), the 2D D'Yakonov scheme solves for **full solution values** $u^*$ and $u^{n+1}$ directly. This means:
+
+- Boundary conditions are applied directly: $u = g(t^{n+1})$ at Dirichlet boundaries
+- No subtraction of current values is needed for Robin/Neumann BCs
+- The intermediate variable $u^*$ represents an approximate solution, not an increment
+
 ## Stability
 
 The D'Yakonov ADI scheme is **unconditionally stable** for the heat equation. This means:
@@ -178,6 +186,6 @@ The D'Yakonov ADI scheme is **unconditionally stable** for the heat equation. Th
 
 ## References
 
-- D'Yakonov, E. G. (1961). "Difference schemes with splitting operator for multidimensional unsteady problems."
+- D'Yakonov, E. G. (1963). *Difference schemes with a "disintegrating operator" for multidimensional unsteady problems.*
 - Morton, K. W., & Mayers, D. F. (2005). *Numerical Solution of Partial Differential Equations*. Cambridge University Press.
 

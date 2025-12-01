@@ -53,8 +53,6 @@ from .boundary import (
     BoundaryConditions3D,
     BoundaryCondition,
     BCType,
-    get_bc_coefficients,
-    get_bc_rhs_contribution,
 )
 from .tridiagonal import solve_tridiagonal
 
@@ -244,16 +242,10 @@ class HeatSolver3D:
         b = np.full(nx, 1.0 + r_x, dtype=np.float64)
         c = np.full(nx, -r_x / 2, dtype=np.float64)
 
-        # Boundary modifications.
-        a_coef, b_coef, c_coef = get_bc_coefficients(
-            self.bc.x_min, self.domain.dx, is_min_boundary=True
-        )
-        a[0], b[0], c[0] = a_coef, b_coef, c_coef
-
-        a_coef, b_coef, c_coef = get_bc_coefficients(
-            self.bc.x_max, self.domain.dx, is_min_boundary=False
-        )
-        a[-1], b[-1], c[-1] = a_coef, b_coef, c_coef
+        # Boundary modifications: use identity (Dirichlet-style) for all BC types.
+        # The actual BC values are computed in the sweep functions.
+        a[0], b[0], c[0] = 0.0, 1.0, 0.0
+        a[-1], b[-1], c[-1] = 0.0, 1.0, 0.0
 
         return a, b, c
 
@@ -268,15 +260,9 @@ class HeatSolver3D:
         b = np.full(ny, 1.0 + r_y, dtype=np.float64)
         c = np.full(ny, -r_y / 2, dtype=np.float64)
 
-        a_coef, b_coef, c_coef = get_bc_coefficients(
-            self.bc.y_min, self.domain.dy, is_min_boundary=True
-        )
-        a[0], b[0], c[0] = a_coef, b_coef, c_coef
-
-        a_coef, b_coef, c_coef = get_bc_coefficients(
-            self.bc.y_max, self.domain.dy, is_min_boundary=False
-        )
-        a[-1], b[-1], c[-1] = a_coef, b_coef, c_coef
+        # Boundary modifications: use identity (Dirichlet-style) for all BC types.
+        a[0], b[0], c[0] = 0.0, 1.0, 0.0
+        a[-1], b[-1], c[-1] = 0.0, 1.0, 0.0
 
         return a, b, c
 
@@ -291,15 +277,9 @@ class HeatSolver3D:
         b = np.full(nz, 1.0 + r_z, dtype=np.float64)
         c = np.full(nz, -r_z / 2, dtype=np.float64)
 
-        a_coef, b_coef, c_coef = get_bc_coefficients(
-            self.bc.z_min, self.domain.dz, is_min_boundary=True
-        )
-        a[0], b[0], c[0] = a_coef, b_coef, c_coef
-
-        a_coef, b_coef, c_coef = get_bc_coefficients(
-            self.bc.z_max, self.domain.dz, is_min_boundary=False
-        )
-        a[-1], b[-1], c[-1] = a_coef, b_coef, c_coef
+        # Boundary modifications: use identity (Dirichlet-style) for all BC types.
+        a[0], b[0], c[0] = 0.0, 1.0, 0.0
+        a[-1], b[-1], c[-1] = 0.0, 1.0, 0.0
 
         return a, b, c
 
@@ -378,24 +358,46 @@ class HeatSolver3D:
                         (np.array([y_coord]), np.array([z_coord])), t_new
                     ).flat[0]
                     d[0] = u_bc - u_n[0, j, k]
-                elif self.bc.x_min.bc_type in (BCType.NEUMANN, BCType.ROBIN):
-                    d[0] = get_bc_rhs_contribution(
-                        self.bc.x_min,
-                        (np.array([y_coord]), np.array([z_coord])),
-                        t_new, dx, True
+                elif self.bc.x_min.bc_type == BCType.NEUMANN:
+                    # Neumann ∂u/∂n = g: extrapolate boundary using interior.
+                    g_new = self.bc.x_min.evaluate(
+                        (np.array([y_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    # At x_min: ∂u/∂n = (u[0]-u[1])/dx = g => u[0] = u[1] + dx*g
+                    # Target: u_bc = u^{n+1}[1] + dx*g ≈ u^n[1] + dx*g (lag interior by one step)
+                    u_bc = u_n[1, j, k] + dx * g_new
+                    d[0] = u_bc - u_n[0, j, k]
+                elif self.bc.x_min.bc_type == BCType.ROBIN:
+                    # Robin αu + β∂u/∂n = g: compute boundary value.
+                    g_new = self.bc.x_min.evaluate(
+                        (np.array([y_coord]), np.array([z_coord])), t_new
+                    ).flat[0]
+                    alpha, beta = self.bc.x_min.alpha, self.bc.x_min.beta
+                    # At x_min: ∂u/∂n = (u[0]-u[1])/dx
+                    # αu[0] + β(u[0]-u[1])/dx = g => (α + β/dx)u[0] = g + (β/dx)u[1]
+                    # u[0] = (g + (β/dx)*u[1]) / (α + β/dx)
+                    u_bc = (g_new + (beta / dx) * u_n[1, j, k]) / (alpha + beta / dx)
+                    d[0] = u_bc - u_n[0, j, k]
 
                 if self.bc.x_max.bc_type == BCType.DIRICHLET:
                     u_bc = self.bc.x_max.evaluate(
                         (np.array([y_coord]), np.array([z_coord])), t_new
                     ).flat[0]
                     d[-1] = u_bc - u_n[-1, j, k]
-                elif self.bc.x_max.bc_type in (BCType.NEUMANN, BCType.ROBIN):
-                    d[-1] = get_bc_rhs_contribution(
-                        self.bc.x_max,
-                        (np.array([y_coord]), np.array([z_coord])),
-                        t_new, dx, False
+                elif self.bc.x_max.bc_type == BCType.NEUMANN:
+                    g_new = self.bc.x_max.evaluate(
+                        (np.array([y_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    # At x_max: ∂u/∂n = (u[-1]-u[-2])/dx = g => u[-1] = u[-2] + dx*g
+                    u_bc = u_n[-2, j, k] + dx * g_new
+                    d[-1] = u_bc - u_n[-1, j, k]
+                elif self.bc.x_max.bc_type == BCType.ROBIN:
+                    g_new = self.bc.x_max.evaluate(
+                        (np.array([y_coord]), np.array([z_coord])), t_new
+                    ).flat[0]
+                    alpha, beta = self.bc.x_max.alpha, self.bc.x_max.beta
+                    u_bc = (g_new + (beta / dx) * u_n[-2, j, k]) / (alpha + beta / dx)
+                    d[-1] = u_bc - u_n[-1, j, k]
 
                 du_star[:, j, k] = solve_tridiagonal(a, b, c, d)
 
@@ -458,24 +460,38 @@ class HeatSolver3D:
                         (np.array([x_coord]), np.array([z_coord])), t_new
                     ).flat[0]
                     d[0] = u_bc - u_n[i, 0, k]
-                elif self.bc.y_min.bc_type in (BCType.NEUMANN, BCType.ROBIN):
-                    d[0] = get_bc_rhs_contribution(
-                        self.bc.y_min,
-                        (np.array([x_coord]), np.array([z_coord])),
-                        t_new, dy, True
+                elif self.bc.y_min.bc_type == BCType.NEUMANN:
+                    g_new = self.bc.y_min.evaluate(
+                        (np.array([x_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    u_bc = u_n[i, 1, k] + dy * g_new
+                    d[0] = u_bc - u_n[i, 0, k]
+                elif self.bc.y_min.bc_type == BCType.ROBIN:
+                    g_new = self.bc.y_min.evaluate(
+                        (np.array([x_coord]), np.array([z_coord])), t_new
+                    ).flat[0]
+                    alpha, beta = self.bc.y_min.alpha, self.bc.y_min.beta
+                    u_bc = (g_new + (beta / dy) * u_n[i, 1, k]) / (alpha + beta / dy)
+                    d[0] = u_bc - u_n[i, 0, k]
 
                 if self.bc.y_max.bc_type == BCType.DIRICHLET:
                     u_bc = self.bc.y_max.evaluate(
                         (np.array([x_coord]), np.array([z_coord])), t_new
                     ).flat[0]
                     d[-1] = u_bc - u_n[i, -1, k]
-                elif self.bc.y_max.bc_type in (BCType.NEUMANN, BCType.ROBIN):
-                    d[-1] = get_bc_rhs_contribution(
-                        self.bc.y_max,
-                        (np.array([x_coord]), np.array([z_coord])),
-                        t_new, dy, False
+                elif self.bc.y_max.bc_type == BCType.NEUMANN:
+                    g_new = self.bc.y_max.evaluate(
+                        (np.array([x_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    u_bc = u_n[i, -2, k] + dy * g_new
+                    d[-1] = u_bc - u_n[i, -1, k]
+                elif self.bc.y_max.bc_type == BCType.ROBIN:
+                    g_new = self.bc.y_max.evaluate(
+                        (np.array([x_coord]), np.array([z_coord])), t_new
+                    ).flat[0]
+                    alpha, beta = self.bc.y_max.alpha, self.bc.y_max.beta
+                    u_bc = (g_new + (beta / dy) * u_n[i, -2, k]) / (alpha + beta / dy)
+                    d[-1] = u_bc - u_n[i, -1, k]
 
                 du_dstar[i, :, k] = solve_tridiagonal(a, b, c, d)
 
@@ -538,24 +554,38 @@ class HeatSolver3D:
                         (np.array([x_coord]), np.array([y_coord])), t_new
                     ).flat[0]
                     d[0] = u_bc - u_n[i, j, 0]
-                elif self.bc.z_min.bc_type in (BCType.NEUMANN, BCType.ROBIN):
-                    d[0] = get_bc_rhs_contribution(
-                        self.bc.z_min,
-                        (np.array([x_coord]), np.array([y_coord])),
-                        t_new, dz, True
+                elif self.bc.z_min.bc_type == BCType.NEUMANN:
+                    g_new = self.bc.z_min.evaluate(
+                        (np.array([x_coord]), np.array([y_coord])), t_new
                     ).flat[0]
+                    u_bc = u_n[i, j, 1] + dz * g_new
+                    d[0] = u_bc - u_n[i, j, 0]
+                elif self.bc.z_min.bc_type == BCType.ROBIN:
+                    g_new = self.bc.z_min.evaluate(
+                        (np.array([x_coord]), np.array([y_coord])), t_new
+                    ).flat[0]
+                    alpha, beta = self.bc.z_min.alpha, self.bc.z_min.beta
+                    u_bc = (g_new + (beta / dz) * u_n[i, j, 1]) / (alpha + beta / dz)
+                    d[0] = u_bc - u_n[i, j, 0]
 
                 if self.bc.z_max.bc_type == BCType.DIRICHLET:
                     u_bc = self.bc.z_max.evaluate(
                         (np.array([x_coord]), np.array([y_coord])), t_new
                     ).flat[0]
                     d[-1] = u_bc - u_n[i, j, -1]
-                elif self.bc.z_max.bc_type in (BCType.NEUMANN, BCType.ROBIN):
-                    d[-1] = get_bc_rhs_contribution(
-                        self.bc.z_max,
-                        (np.array([x_coord]), np.array([y_coord])),
-                        t_new, dz, False
+                elif self.bc.z_max.bc_type == BCType.NEUMANN:
+                    g_new = self.bc.z_max.evaluate(
+                        (np.array([x_coord]), np.array([y_coord])), t_new
                     ).flat[0]
+                    u_bc = u_n[i, j, -2] + dz * g_new
+                    d[-1] = u_bc - u_n[i, j, -1]
+                elif self.bc.z_max.bc_type == BCType.ROBIN:
+                    g_new = self.bc.z_max.evaluate(
+                        (np.array([x_coord]), np.array([y_coord])), t_new
+                    ).flat[0]
+                    alpha, beta = self.bc.z_max.alpha, self.bc.z_max.beta
+                    u_bc = (g_new + (beta / dz) * u_n[i, j, -2]) / (alpha + beta / dz)
+                    d[-1] = u_bc - u_n[i, j, -1]
 
                 du[i, j, :] = solve_tridiagonal(a, b, c, d)
 

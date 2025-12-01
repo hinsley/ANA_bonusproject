@@ -65,7 +65,7 @@ $$
 For each fixed $(j, k)$ pair, solve the tridiagonal system:
 
 $$
--\frac{r_x}{2} \Delta u^*_{i-1} + (1 + r_x) \Delta u^*_{i} - \frac{r_x}{2} \Delta u^*_{i+1} = S_{i,j,k}
+-\frac{r_x}{2} \Delta u^{*}_{i-1} + (1 + r_x) \Delta u^{*}_{i} - \frac{r_x}{2} \Delta u^{*}_{i+1} = S_{i,j,k}
 $$
 
 #### Step 2: Y-Sweep (Solve for $\Delta u^{**}$)
@@ -77,7 +77,7 @@ $$
 For each fixed $(i, k)$ pair, solve the tridiagonal system:
 
 $$
--\frac{r_y}{2} \Delta u^{**}_{j-1} + (1 + r_y) \Delta u^{**}_{j} - \frac{r_y}{2} \Delta u^{**}_{j+1} = \Delta u^*_{i,j,k}
+-\frac{r_y}{2} \Delta u^{**}_{j-1} + (1 + r_y) \Delta u^{**}_{j} - \frac{r_y}{2} \Delta u^{**}_{j+1} = \Delta u^{*}_{i,j,k}
 $$
 
 #### Step 3: Z-Sweep (Solve for $\Delta u$)
@@ -157,16 +157,32 @@ For each time step n → n+1:
 
 ### Boundary Condition Handling in Delta Form
 
-For **Dirichlet boundary conditions**, the increment at boundaries is:
+Because we solve for increments $\Delta u$ rather than full values, boundary conditions require special handling.
+
+#### Dirichlet Boundary Conditions
+
+For $u = g$ at the boundary:
 
 $$
-\Delta u_{\text{boundary}} = u_{\text{boundary}}(t^{n+1}) - u^n_{\text{boundary}}
+\Delta u_{\text{boundary}} = g(t^{n+1}) - u^n_{\text{boundary}}
 $$
 
 - If the boundary value is **time-independent**: $\Delta u = 0$
 - If the boundary value is **time-dependent**: $\Delta u = g(t^{n+1}) - u^n$
 
-For **Neumann** and **Robin** boundary conditions, the existing coefficient structure modifies the tridiagonal matrix at boundary rows.
+#### Neumann and Robin Boundary Conditions (Pseudo-Dirichlet Approach)
+
+For Neumann ($\frac{\partial u}{\partial n} = g$) and Robin ($\alpha u + \beta \frac{\partial u}{\partial n} = g$) conditions, we use a **pseudo-Dirichlet** approach:
+
+1. **Compute the target boundary value** from the BC equation using interior values:
+   - **Neumann**: $u_{\text{bc}} = u_{\text{interior}} + h \cdot g(t^{n+1})$
+   - **Robin**: $u_{\text{bc}} = \frac{g(t^{n+1}) + (\beta/h) \cdot u_{\text{interior}}}{\alpha + \beta/h}$
+
+2. **Treat as Dirichlet**: $\Delta u_{\text{boundary}} = u_{\text{bc}} - u^n_{\text{boundary}}$
+
+3. **Use identity row** in the tridiagonal system at boundaries.
+
+This approach is stable and provides good convergence, though the boundary accuracy is first-order due to lagging interior values.
 
 ### Tridiagonal Solver
 
