@@ -397,3 +397,5 @@ def list_available_solutions() -> None:
     print("  - ManufacturedSolution3D: sin(pi*x)*sin(pi*y)*sin(pi*z)*exp(-t) with forcing.")
     print("  - SeparableSolution3D: Eigenmode solutions, no forcing.")
 
+
+

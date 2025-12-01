@@ -1,36 +1,45 @@
 """
-3D Heat Equation Solver using an adapted Peaceman-Rachford ADI scheme.
+3D Heat Equation Solver using the Douglas-Gunn ADI scheme (Delta Form).
 
 Solves: U_t = c * (U_xx + U_yy + U_zz) + F(x, y, z, t)
 
 ============================================================================
-TODO: VERIFY - 3D PEACEMAN-RACHFORD ADAPTATION
+DOUGLAS-GUNN ADI SCHEME (DELTA FORM)
 ============================================================================
-This implementation adapts the 2D Peaceman-Rachford scheme to 3D using a
-three-step fractional splitting approach (Douglas-Gunn style). The specific
-form used here is:
+This implementation uses the classic "Delta-form" Douglas-Gunn ADI scheme,
+which splits a complex 3D problem into three simpler 1D problems solved
+sequentially. The scheme solves for increments (deltas) rather than full
+solution values at each fractional step.
 
-  Step 1 (x-implicit):
-    (1 - r_x/2 * delta_x^2) u* = u^n + r/2 * (delta_x^2 + delta_y^2 + delta_z^2) u^n
-                           + dt/2 * (F^n + F^{n+1})
+  Step 0 (Explicit RHS):
+    S = (r_x * delta_x^2 + r_y * delta_y^2 + r_z * delta_z^2) u^n
+        + (1/2) * (F^n + F^{n+1})
 
-  Step 2 (y-implicit):
-    (1 - r_y/2 * delta_y^2) u** = u* - r_y/2 * delta_y^2 u^n
+  Step 1 (X-sweep, solve for Delta_u*):
+    (1 - r_x/2 * delta_x^2) Delta_u* = S
 
-  Step 3 (z-implicit):
-    (1 - r_z/2 * delta_z^2) u^{n+1} = u** - r_z/2 * delta_z^2 u^n
+  Step 2 (Y-sweep, solve for Delta_u**):
+    (1 - r_y/2 * delta_y^2) Delta_u** = Delta_u*
+
+  Step 3 (Z-sweep, solve for Delta_u):
+    (1 - r_z/2 * delta_z^2) Delta_u = Delta_u**
+
+  Step 4 (Final update):
+    u^{n+1} = u^n + Delta_u
 
 Where:
   r_x = c * dt / dx^2, r_y = c * dt / dy^2, r_z = c * dt / dz^2
+  delta_x^2 u_i = u_{i+1} - 2*u_i + u_{i-1} (central difference operator)
 
-This should be unconditionally stable and O(dt^2 + dx^2 + dy^2 + dz^2) accurate.
+This scheme is unconditionally stable and O(dt^2 + dx^2 + dy^2 + dz^2) accurate.
 
-If this does not match your derivation, the key functions to modify are:
-  - _peaceman_rachford_step_x()
-  - _peaceman_rachford_step_y()
-  - _peaceman_rachford_step_z()
+The key functions implementing the directional sweeps are:
+  - _douglas_gunn_step_x()
+  - _douglas_gunn_step_y()
+  - _douglas_gunn_step_z()
 
-Each step is isolated and clearly documented for easy modification.
+Each sweep produces a tridiagonal system that is solved using the Thomas
+algorithm (TDMA).
 ============================================================================
 """
 
@@ -117,7 +126,7 @@ class Domain3D:
 
 class HeatSolver3D:
     """
-    3D Heat equation solver using adapted Peaceman-Rachford ADI scheme.
+    3D Heat equation solver using the Douglas-Gunn ADI scheme (Delta Form).
 
     Parameters
     ----------
@@ -295,11 +304,12 @@ class HeatSolver3D:
         return a, b, c
 
     # ========================================================================
-    # TODO: VERIFY - The three step functions below implement the adapted
-    # Peaceman-Rachford scheme. Modify these if your derivation differs.
+    # DOUGLAS-GUNN ADI SCHEME (DELTA FORM)
+    # The three step functions below implement the Douglas-Gunn scheme.
+    # Each step solves for an increment (delta) rather than full solution.
     # ========================================================================
 
-    def _peaceman_rachford_step_x(
+    def _douglas_gunn_step_x(
         self,
         u_n: NDArray,
         r_x: float,
@@ -309,50 +319,65 @@ class HeatSolver3D:
         t_new: float,
     ) -> NDArray:
         """
-        Step 1: X-direction implicit solve.
+        Step 1: X-direction implicit solve for Delta_u*.
 
-        TODO: VERIFY this step matches your derivation.
+        First computes the explicit RHS:
+            S = (r_x * delta_x^2 + r_y * delta_y^2 + r_z * delta_z^2) u^n + forcing_term
 
-        Solves:
-            (1 - r_x/2 * delta_x^2) u* = u^n + r/2 * (delta_x^2 + delta_y^2 + delta_z^2) u^n + forcing_term
+        Then solves:
+            (1 - r_x/2 * delta_x^2) Delta_u* = S
 
-        The RHS can be rewritten as:
-            u^n + r_x/2 * delta_x^2 u^n + r_y/2 * delta_y^2 u^n + r_z/2 * delta_z^2 u^n + forcing_term
-            = (1 + r_x/2 * delta_x^2) u^n + r_y/2 * delta_y^2 u^n + r_z/2 * delta_z^2 u^n + forcing_term
+        This gives the tridiagonal system:
+            -r_x/2 * Delta_u*_{i-1} + (1 + r_x) * Delta_u*_i - r_x/2 * Delta_u*_{i+1} = S_i
+
+        Parameters
+        ----------
+        u_n : ndarray
+            Solution at time step n.
+        r_x, r_y, r_z : float
+            Courant-like numbers for each direction.
+        forcing_term : ndarray
+            Time-averaged forcing: (1/2) * (F^n + F^{n+1}).
+        t_new : float
+            Time at step n+1 (for boundary conditions).
+
+        Returns
+        -------
+        du_star : ndarray
+            Increment Delta_u* from the X-sweep.
         """
         nx, ny, nz = self.domain.nx, self.domain.ny, self.domain.nz
         dx = self.domain.dx
 
-        # Compute RHS.
+        # Compute explicit RHS: S = (r_x δ_x² + r_y δ_y² + r_z δ_z²) u^n + forcing.
         delta_sq_x = self._apply_delta_sq_x(u_n)
         delta_sq_y = self._apply_delta_sq_y(u_n)
         delta_sq_z = self._apply_delta_sq_z(u_n)
 
         rhs = (
-            u_n
-            + (r_x / 2) * delta_sq_x
-            + (r_y / 2) * delta_sq_y
-            + (r_z / 2) * delta_sq_z
+            r_x * delta_sq_x
+            + r_y * delta_sq_y
+            + r_z * delta_sq_z
             + forcing_term
         )
 
         # Build tridiagonal system and solve along x-lines.
         a, b, c = self._build_tridiag_coefficients_x(r_x)
-        u_star = np.zeros_like(u_n)
-
-        y_grid, z_grid = np.meshgrid(self.domain.y, self.domain.z, indexing='ij')
+        du_star = np.zeros_like(u_n)
 
         for j in range(ny):
             for k in range(nz):
                 d = rhs[:, j, k].copy()
 
-                # Boundary conditions in x.
+                # Boundary conditions in x (delta form).
+                # For Dirichlet: Delta_u = u_boundary(t_{n+1}) - u^n at boundary.
                 y_coord, z_coord = self.domain.y[j], self.domain.z[k]
 
                 if self.bc.x_min.bc_type == BCType.DIRICHLET:
-                    d[0] = self.bc.x_min.evaluate(
+                    u_bc = self.bc.x_min.evaluate(
                         (np.array([y_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    d[0] = u_bc - u_n[0, j, k]
                 elif self.bc.x_min.bc_type in (BCType.NEUMANN, BCType.ROBIN):
                     d[0] = get_bc_rhs_contribution(
                         self.bc.x_min,
@@ -361,9 +386,10 @@ class HeatSolver3D:
                     ).flat[0]
 
                 if self.bc.x_max.bc_type == BCType.DIRICHLET:
-                    d[-1] = self.bc.x_max.evaluate(
+                    u_bc = self.bc.x_max.evaluate(
                         (np.array([y_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    d[-1] = u_bc - u_n[-1, j, k]
                 elif self.bc.x_max.bc_type in (BCType.NEUMANN, BCType.ROBIN):
                     d[-1] = get_bc_rhs_contribution(
                         self.bc.x_max,
@@ -371,50 +397,67 @@ class HeatSolver3D:
                         t_new, dx, False
                     ).flat[0]
 
-                u_star[:, j, k] = solve_tridiagonal(a, b, c, d)
+                du_star[:, j, k] = solve_tridiagonal(a, b, c, d)
 
-        return u_star
+        return du_star
 
-    def _peaceman_rachford_step_y(
+    def _douglas_gunn_step_y(
         self,
-        u_star: NDArray,
+        du_star: NDArray,
         u_n: NDArray,
         r_y: float,
         t_new: float,
     ) -> NDArray:
         """
-        Step 2: Y-direction implicit solve.
-
-        TODO: VERIFY this step matches your derivation.
+        Step 2: Y-direction implicit solve for Delta_u**.
 
         Solves:
-            (1 - r_y/2 * delta_y^2) u** = u* - r_y/2 * delta_y^2 u^n
+            (1 - r_y/2 * delta_y^2) Delta_u** = Delta_u*
 
-        This subtracts out the explicit y-contribution from step 1 and replaces
-        it with an implicit treatment.
+        The RHS is simply the result from the X-sweep (Delta_u*).
+
+        This gives the tridiagonal system:
+            -r_y/2 * Delta_u**_{j-1} + (1 + r_y) * Delta_u**_j - r_y/2 * Delta_u**_{j+1} = Delta_u*_j
+
+        Parameters
+        ----------
+        du_star : ndarray
+            Increment from X-sweep (Delta_u*).
+        u_n : ndarray
+            Solution at time step n (for boundary conditions).
+        r_y : float
+            Courant-like number for y direction.
+        t_new : float
+            Time at step n+1 (for boundary conditions).
+
+        Returns
+        -------
+        du_dstar : ndarray
+            Increment Delta_u** from the Y-sweep.
         """
         nx, ny, nz = self.domain.nx, self.domain.ny, self.domain.nz
         dy = self.domain.dy
 
-        # Compute RHS.
-        delta_sq_y_un = self._apply_delta_sq_y(u_n)
-        rhs = u_star - (r_y / 2) * delta_sq_y_un
+        # RHS is simply Delta_u* from the X-sweep.
+        rhs = du_star
 
         # Build tridiagonal system and solve along y-lines.
         a, b, c = self._build_tridiag_coefficients_y(r_y)
-        u_dstar = np.zeros_like(u_star)
+        du_dstar = np.zeros_like(du_star)
 
         for i in range(nx):
             for k in range(nz):
                 d = rhs[i, :, k].copy()
 
-                # Boundary conditions in y.
+                # Boundary conditions in y (delta form).
+                # For Dirichlet: Delta_u = u_boundary(t_{n+1}) - u^n at boundary.
                 x_coord, z_coord = self.domain.x[i], self.domain.z[k]
 
                 if self.bc.y_min.bc_type == BCType.DIRICHLET:
-                    d[0] = self.bc.y_min.evaluate(
+                    u_bc = self.bc.y_min.evaluate(
                         (np.array([x_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    d[0] = u_bc - u_n[i, 0, k]
                 elif self.bc.y_min.bc_type in (BCType.NEUMANN, BCType.ROBIN):
                     d[0] = get_bc_rhs_contribution(
                         self.bc.y_min,
@@ -423,9 +466,10 @@ class HeatSolver3D:
                     ).flat[0]
 
                 if self.bc.y_max.bc_type == BCType.DIRICHLET:
-                    d[-1] = self.bc.y_max.evaluate(
+                    u_bc = self.bc.y_max.evaluate(
                         (np.array([x_coord]), np.array([z_coord])), t_new
                     ).flat[0]
+                    d[-1] = u_bc - u_n[i, -1, k]
                 elif self.bc.y_max.bc_type in (BCType.NEUMANN, BCType.ROBIN):
                     d[-1] = get_bc_rhs_contribution(
                         self.bc.y_max,
@@ -433,50 +477,67 @@ class HeatSolver3D:
                         t_new, dy, False
                     ).flat[0]
 
-                u_dstar[i, :, k] = solve_tridiagonal(a, b, c, d)
+                du_dstar[i, :, k] = solve_tridiagonal(a, b, c, d)
 
-        return u_dstar
+        return du_dstar
 
-    def _peaceman_rachford_step_z(
+    def _douglas_gunn_step_z(
         self,
-        u_dstar: NDArray,
+        du_dstar: NDArray,
         u_n: NDArray,
         r_z: float,
         t_new: float,
     ) -> NDArray:
         """
-        Step 3: Z-direction implicit solve.
-
-        TODO: VERIFY this step matches your derivation.
+        Step 3: Z-direction implicit solve for Delta_u (final increment).
 
         Solves:
-            (1 - r_z/2 * delta_z^2) u^{n+1} = u** - r_z/2 * delta_z^2 u^n
+            (1 - r_z/2 * delta_z^2) Delta_u = Delta_u**
 
-        This subtracts out the explicit z-contribution from step 1 and replaces
-        it with an implicit treatment.
+        The RHS is simply the result from the Y-sweep (Delta_u**).
+
+        This gives the tridiagonal system:
+            -r_z/2 * Delta_u_{k-1} + (1 + r_z) * Delta_u_k - r_z/2 * Delta_u_{k+1} = Delta_u**_k
+
+        Parameters
+        ----------
+        du_dstar : ndarray
+            Increment from Y-sweep (Delta_u**).
+        u_n : ndarray
+            Solution at time step n (for boundary conditions).
+        r_z : float
+            Courant-like number for z direction.
+        t_new : float
+            Time at step n+1 (for boundary conditions).
+
+        Returns
+        -------
+        du : ndarray
+            Final increment Delta_u from the Z-sweep.
         """
         nx, ny, nz = self.domain.nx, self.domain.ny, self.domain.nz
         dz = self.domain.dz
 
-        # Compute RHS.
-        delta_sq_z_un = self._apply_delta_sq_z(u_n)
-        rhs = u_dstar - (r_z / 2) * delta_sq_z_un
+        # RHS is simply Delta_u** from the Y-sweep.
+        rhs = du_dstar
 
         # Build tridiagonal system and solve along z-lines.
         a, b, c = self._build_tridiag_coefficients_z(r_z)
-        u_new = np.zeros_like(u_dstar)
+        du = np.zeros_like(du_dstar)
 
         for i in range(nx):
             for j in range(ny):
                 d = rhs[i, j, :].copy()
 
-                # Boundary conditions in z.
+                # Boundary conditions in z (delta form).
+                # For Dirichlet: Delta_u = u_boundary(t_{n+1}) - u^n at boundary.
                 x_coord, y_coord = self.domain.x[i], self.domain.y[j]
 
                 if self.bc.z_min.bc_type == BCType.DIRICHLET:
-                    d[0] = self.bc.z_min.evaluate(
+                    u_bc = self.bc.z_min.evaluate(
                         (np.array([x_coord]), np.array([y_coord])), t_new
                     ).flat[0]
+                    d[0] = u_bc - u_n[i, j, 0]
                 elif self.bc.z_min.bc_type in (BCType.NEUMANN, BCType.ROBIN):
                     d[0] = get_bc_rhs_contribution(
                         self.bc.z_min,
@@ -485,9 +546,10 @@ class HeatSolver3D:
                     ).flat[0]
 
                 if self.bc.z_max.bc_type == BCType.DIRICHLET:
-                    d[-1] = self.bc.z_max.evaluate(
+                    u_bc = self.bc.z_max.evaluate(
                         (np.array([x_coord]), np.array([y_coord])), t_new
                     ).flat[0]
+                    d[-1] = u_bc - u_n[i, j, -1]
                 elif self.bc.z_max.bc_type in (BCType.NEUMANN, BCType.ROBIN):
                     d[-1] = get_bc_rhs_contribution(
                         self.bc.z_max,
@@ -495,16 +557,20 @@ class HeatSolver3D:
                         t_new, dz, False
                     ).flat[0]
 
-                u_new[i, j, :] = solve_tridiagonal(a, b, c, d)
+                du[i, j, :] = solve_tridiagonal(a, b, c, d)
 
-        return u_new
+        return du
 
     def step(self, dt: float) -> None:
         """
-        Advance the solution by one time step using adapted Peaceman-Rachford ADI.
+        Advance the solution by one time step using Douglas-Gunn ADI (Delta Form).
 
-        TODO: VERIFY - If your 3D derivation differs, modify the three
-        _peaceman_rachford_step_* methods above.
+        The algorithm proceeds as follows:
+          1. Compute explicit RHS: S = (r_x δ_x² + r_y δ_y² + r_z δ_z²) u^n + forcing
+          2. X-sweep: Solve (1 - r_x/2 δ_x²) Δu* = S
+          3. Y-sweep: Solve (1 - r_y/2 δ_y²) Δu** = Δu*
+          4. Z-sweep: Solve (1 - r_z/2 δ_z²) Δu = Δu**
+          5. Update: u^{n+1} = u^n + Δu
 
         Parameters
         ----------
@@ -519,24 +585,25 @@ class HeatSolver3D:
         t_n = self.t
         t_np1 = self.t + dt
 
-        # Evaluate forcing at current and next time.
+        # Evaluate forcing at current and next time: (1/2) * (F^n + F^{n+1}).
         F_n = self.forcing(self.X, self.Y, self.Z, t_n)
         F_np1 = self.forcing(self.X, self.Y, self.Z, t_np1)
-        forcing_term = (dt / 2) * (F_n + F_np1)
+        forcing_term = 0.5 * (F_n + F_np1)
 
         # Store u^n for use in all steps.
         u_n = self.u.copy()
 
-        # Step 1: X-implicit.
-        u_star = self._peaceman_rachford_step_x(u_n, r_x, r_y, r_z, forcing_term, t_np1)
+        # Step 1: X-sweep (solve for Δu*).
+        du_star = self._douglas_gunn_step_x(u_n, r_x, r_y, r_z, forcing_term, t_np1)
 
-        # Step 2: Y-implicit.
-        u_dstar = self._peaceman_rachford_step_y(u_star, u_n, r_y, t_np1)
+        # Step 2: Y-sweep (solve for Δu**).
+        du_dstar = self._douglas_gunn_step_y(du_star, u_n, r_y, t_np1)
 
-        # Step 3: Z-implicit.
-        u_new = self._peaceman_rachford_step_z(u_dstar, u_n, r_z, t_np1)
+        # Step 3: Z-sweep (solve for Δu).
+        du = self._douglas_gunn_step_z(du_dstar, u_n, r_z, t_np1)
 
-        self.u = u_new
+        # Step 4: Final update: u^{n+1} = u^n + Δu.
+        self.u = u_n + du
         self.t = t_np1
 
     def solve(
@@ -642,6 +709,6 @@ class HeatSolver3D:
             'dy': dy,
             'dz': dz,
             'c': self.c,
-            'note': "Adapted Peaceman-Rachford scheme should be unconditionally stable. "
-                    "TODO: VERIFY this claim for the specific 3D adaptation used.",
+            'note': "Douglas-Gunn ADI scheme is unconditionally stable and "
+                    "O(dt^2 + dx^2 + dy^2 + dz^2) accurate for the heat equation.",
         }

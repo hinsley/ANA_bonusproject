@@ -471,3 +471,5 @@ class HeatSolver2D:
             'note': "D'Yakonov scheme is unconditionally stable for the heat equation.",
         }
 
+
+
