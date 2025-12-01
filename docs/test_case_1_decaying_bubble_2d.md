@@ -62,8 +62,8 @@ The solution represents a "bubble" of heat centered in the domain that decays ex
 
 For the D'Yakonov ADI scheme:
 
-- **Spatial accuracy**: Second-order ($O(\Delta x^2 + \Delta y^2)$)
-- **Temporal accuracy**: Second-order ($O(\Delta t^2)$)
+- **Spatial accuracy**: Second-order ( $O(\Delta x^2 + \Delta y^2)$ )
+- **Temporal accuracy**: Second-order ( $O(\Delta t^2)$ )
 - **Stability**: Unconditionally stable
 
 ## Usage
