@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import numpy as np
 from numpy.typing import NDArray
+import matplotlib.pyplot as plt
 
 from heat_solver import (
     HeatSolver2D,
@@ -184,6 +185,72 @@ def run_convergence_study(report: Reporter) -> list:
 
 
 # =============================================================================
+# ERROR PLOTTING
+# =============================================================================
+
+def create_error_plots(
+    times: list,
+    errors_linf: list,
+    errors_l2: list,
+    rel_errors: list,
+    max_u_values: list,
+    save_path: str,
+    title_prefix: str = "",
+) -> None:
+    """
+    Create a 3-panel figure showing error metrics over time.
+
+    Panel 1: L-infinity and L2 errors (dual y-axes).
+    Panel 2: Relative error.
+    Panel 3: Max |u| values.
+    """
+    fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+    fig.suptitle(f"{title_prefix} Error Analysis", fontsize=14, fontweight="bold")
+
+    # Panel 1: L-infinity and L2 errors with dual y-axes.
+    ax1 = axes[0]
+    color_linf = "tab:blue"
+    color_l2 = "tab:red"
+
+    ax1.set_ylabel(r"$L_\infty$ Error", color=color_linf)
+    line1, = ax1.plot(times, errors_linf, color=color_linf, label=r"$L_\infty$ Error", linewidth=1.5)
+    ax1.tick_params(axis="y", labelcolor=color_linf)
+    ax1.set_yscale("log")
+
+    ax1_twin = ax1.twinx()
+    ax1_twin.set_ylabel(r"$L_2$ Error", color=color_l2)
+    line2, = ax1_twin.plot(times, errors_l2, color=color_l2, label=r"$L_2$ Error", linewidth=1.5, linestyle="--")
+    ax1_twin.tick_params(axis="y", labelcolor=color_l2)
+    ax1_twin.set_yscale("log")
+
+    ax1.set_title("Error Norms")
+    lines = [line1, line2]
+    labels = [line.get_label() for line in lines]
+    ax1.legend(lines, labels, loc="upper right")
+    ax1.grid(True, alpha=0.3)
+
+    # Panel 2: Relative error.
+    ax2 = axes[1]
+    ax2.plot(times, rel_errors, color="tab:green", linewidth=1.5)
+    ax2.set_ylabel("Relative Error")
+    ax2.set_title("Relative Error (L-inf / Max |u|)")
+    ax2.set_yscale("log")
+    ax2.grid(True, alpha=0.3)
+
+    # Panel 3: Max |u| values.
+    ax3 = axes[2]
+    ax3.plot(times, max_u_values, color="tab:purple", linewidth=1.5)
+    ax3.set_xlabel("Time")
+    ax3.set_ylabel("Max |u|")
+    ax3.set_title("Maximum Absolute Solution Value")
+    ax3.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# =============================================================================
 # MAIN SCRIPT
 # =============================================================================
 
@@ -209,7 +276,7 @@ def main():
     nx = 51
     dt = 0.001
     t_final = 1.0
-    save_every = 10  # More frames for smoother animation.
+    report_every = 10  # Interval for text output (matching original save_every).
 
     domain = Domain2D(0.0, 1.0, 0.0, 1.0, nx, nx)
     report.write(f"\nGrid: {nx}^2 = {nx**2} points, dx = {domain.dx:.6f}")
@@ -228,30 +295,66 @@ def main():
         forcing=forcing_function,
     )
 
-    times, solutions = solver.solve(t_final=t_final, dt=dt, save_every=save_every)
+    # Run solver saving every step for complete error tracking.
+    times_all, solutions_all = solver.solve(t_final=t_final, dt=dt, save_every=1)
     X, Y, _, _ = solver.get_solution()
 
-    # Error analysis.
-    report.write("\n" + "-" * 70)
-    report.write("Error Analysis vs Exact Solution")
-    report.write("-" * 70)
-    report.write(f"{'Time':>10} {'Max |u|':>12} {'L-inf Err':>12} {'L2 Error':>12} {'Rel Error':>12}")
-    report.write("-" * 70)
+    # Compute errors at ALL timesteps for plotting.
+    all_times = []
+    all_errors_linf = []
+    all_errors_l2 = []
+    all_rel_errors = []
+    all_max_u = []
 
-    for t, u_num in zip(times, solutions):
+    for t, u_num in zip(times_all, solutions_all):
         u_exact = exact_solution(X, Y, t)
         error = np.abs(u_num - u_exact)
         max_u = np.max(np.abs(u_exact))
         err_linf = np.max(error)
         err_l2 = np.sqrt(np.mean(error**2))
         rel_err = err_linf / max_u if max_u > 1e-15 else 0.0
-        report.write(f"{t:10.4f} {max_u:12.6e} {err_linf:12.6e} {err_l2:12.6e} {rel_err:12.6e}")
 
-    # Create visualization.
+        all_times.append(t)
+        all_errors_linf.append(err_linf)
+        all_errors_l2.append(err_l2)
+        all_rel_errors.append(rel_err)
+        all_max_u.append(max_u)
+
+    # Error analysis (text output at original intervals).
+    report.write("\n" + "-" * 70)
+    report.write("Error Analysis vs Exact Solution")
+    report.write("-" * 70)
+    report.write(f"{'Time':>10} {'Max |u|':>12} {'L-inf Err':>12} {'L2 Error':>12} {'Rel Error':>12}")
+    report.write("-" * 70)
+
+    for i, (t, u_num) in enumerate(zip(times_all, solutions_all)):
+        if i % report_every == 0 or i == len(times_all) - 1:
+            u_exact = exact_solution(X, Y, t)
+            error = np.abs(u_num - u_exact)
+            max_u = np.max(np.abs(u_exact))
+            err_linf = np.max(error)
+            err_l2 = np.sqrt(np.mean(error**2))
+            rel_err = err_linf / max_u if max_u > 1e-15 else 0.0
+            report.write(f"{t:10.4f} {max_u:12.6e} {err_linf:12.6e} {err_l2:12.6e} {rel_err:12.6e}")
+
+    # Create error plots.
+    report.write("\n" + "-" * 70)
+    report.write("Creating error plots...")
+    create_error_plots(
+        all_times, all_errors_linf, all_errors_l2, all_rel_errors, all_max_u,
+        save_path="analysis/test_case_1_decaying_bubble_2d_errors.png",
+        title_prefix="Decaying Bubble (2D)",
+    )
+    report.write("Error plots saved to: analysis/test_case_1_decaying_bubble_2d_errors.png")
+
+    # Create visualization (subsample for animation).
+    times_anim = times_all[::report_every]
+    solutions_anim = solutions_all[::report_every]
+
     report.write("\n" + "-" * 70)
     report.write("Creating 2D animation...")
     anim = animate_solution_2d(
-        X, Y, times, solutions,
+        X, Y, times_anim, solutions_anim,
         cmap="inferno",
         title_prefix="Decaying Bubble (2D)",
         save_path="analysis/test_case_1_decaying_bubble_2d.gif",

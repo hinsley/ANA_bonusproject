@@ -1,4 +1,4 @@
-Report generated: 2025-12-01 04:25:27
+Report generated: 2025-12-02 23:30:17
 
 ======================================================================
 Test Case 3 (3D): The 'Quadratic Decay'
@@ -146,11 +146,8 @@ Error Analysis vs Exact Solution
     2.0000 5.413411e-01 6.949064e+01 5.782826e+01 1.283676e+02
 
 ----------------------------------------------------------------------
+Creating error plots...
+Error plots saved to: analysis/test_case_3_quadratic_decay_3d_errors.png
+
+----------------------------------------------------------------------
 Creating 3D volumetric animation...
-Animation saved to: analysis/test_case_3_quadratic_decay_3d.gif
-
-======================================================================
-Test Case 3 (3D) Complete
-======================================================================
-
-Report saved to: analysis/test_case_3_quadratic_decay_3d_report.txt
